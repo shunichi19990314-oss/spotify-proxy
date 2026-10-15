@@ -11,20 +11,15 @@ const getProxyOrigin = (req) => {
   return `${proto}://${host}`;
 };
 
-// ターゲット決定
+// ログイン関連だけ accounts へ（過剥なルーティングをやめる）
 const resolveTarget = (req) => {
   const path = (req.url || "").split("?")[0];
   if (
-    path.startsWith("/login") ||
-    path.startsWith("/api/login") ||
-    path.startsWith("/xhr") ||
+    path === "/login" ||
+    path.startsWith("/login/") ||
     path.startsWith("/oauth2") ||
     path.startsWith("/authorize") ||
-    path.startsWith("/check-cookie") ||
-    path.startsWith("/status") ||
-    path.startsWith("/logout") ||
-    path.startsWith("/api/token") ||
-    path.includes("accounts")
+    path.startsWith("/logout")
   ) {
     return "https://accounts.spotify.com";
   }
@@ -42,36 +37,43 @@ app.use(
     onProxyReq: (proxyReq, req) => {
       const target = resolveTarget(req);
       const host = target.replace("https://", "");
+
+      // 必要最低限のヘッダーだけ設定
       proxyReq.setHeader("Host", host);
-      proxyReq.setHeader("Origin", target);
-      proxyReq.setHeader("Referer", target + "/");
+
+      // 元の User-Agent を守る（なければ一般的なものを設定）
+      if (!req.headers["user-agent"]) {
+        proxyReq.setHeader(
+          "User-Agent",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        );
+      }
     },
 
     onProxyRes: (proxyRes, req) => {
       const proxyOrigin = getProxyOrigin(req);
 
-      // セキュリティヘッダー緩和
+      // CSP と X-Frame-Options だけ削除（他はidそのまま）
       delete proxyRes.headers["content-security-policy"];
       delete proxyRes.headers["content-security-policy-report-only"];
       delete proxyRes.headers["x-frame-options"];
 
-      // Location ヘッダーを Render ドメインに書き換え
+      // Location 書き換え
       if (proxyRes.headers.location) {
         let loc = proxyRes.headers.location;
         loc = loc
           .replace(/https?:\/\/accounts\.spotify\.com/gi, proxyOrigin)
-          .replace(/https?:\/\/open\.spotify\.com/gi, proxyOrigin)
-          .replace(/https?:\/\/www\.spotify\.com/gi, proxyOrigin);
+          .replace(/https?:\/\/open\.spotify\.com/gi, proxyOrigin);
         proxyRes.headers.location = loc;
       }
 
-      // Cookie の Domain 削除
+      // Cookie の Domain を削除（プロキドメインで使えるように）
       if (proxyRes.headers["set-cookie"]) {
         const cookies = Array.isArray(proxyRes.headers["set-cookie"])
           ? proxyRes.headers["set-cookie"]
           : [proxyRes.headers["set-cookie"]];
         proxyRes.headers["set-cookie"] = cookies.map((c) =>
-          c.replace(/Domain=[^;]+;?/gi, "").replace(/;\s*Secure/gi, "")
+          c.replace(/Domain=[^;]+;?/gi, "")
         );
       }
     },
